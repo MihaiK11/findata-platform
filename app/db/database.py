@@ -5,7 +5,10 @@ client: AsyncIOMotorClient = None
 
 async def connect_db():
     global client
-    client = AsyncIOMotorClient(settings.mongodb_url)
+    client = AsyncIOMotorClient(
+        settings.mongodb_url,
+        tlsAllowInvalidCertificates=True
+    )
     print("Connected to MongoDB")
 
 async def close_db():
