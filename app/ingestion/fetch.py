@@ -52,7 +52,7 @@ async def save_asset(symbol: str, data):
         ts_doc = {
             "symbol": symbol,
             "data_source": "QUOTEMEDIA/PRICES",
-            "valid_from": datetime.utcnow(),
+            "valid_from": datetime.now(timezone.utc),
             "is_deleted": False,
             **row  # spread all columns (open, high, low, close, volume etc.)
         }
