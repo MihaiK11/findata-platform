@@ -1,16 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "findata-platform"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.136.1",
     "httpx>=0.28.1",
     "motor>=3.7.1",
+    "numpy>=2.2.0",
     "nasdaq-data-link>=1.0.4",
+    "pandas>=2.2.3",
+    "plotly>=5.24.1",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
     "python-dotenv>=1.2.2",
+    "streamlit>=1.45.0",
     "uvicorn>=0.46.0",
+    "yfinance>=1.4.1",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "streamlit_app"]

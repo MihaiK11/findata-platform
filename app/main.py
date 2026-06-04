@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
+from app.api import analytics_router, query_router
 from app.db.database import connect_db, close_db
 
 @asynccontextmanager
@@ -13,6 +14,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+app.include_router(query_router)
+app.include_router(analytics_router)
 
 @app.get("/health")
 async def health():
