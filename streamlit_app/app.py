@@ -20,6 +20,7 @@ else:
 import streamlit as st
 
 from streamlit_app.views.analytics import render as render_analytics
+from streamlit_app.views.assistant import render as render_assistant
 from streamlit_app.views.dashboard import render as render_dashboard
 
 logging.basicConfig(level=logging.INFO)
@@ -28,11 +29,13 @@ logging.basicConfig(level=logging.INFO)
 def main() -> None:
     st.set_page_config(page_title="Findata Dashboard", page_icon="📈", layout="wide")
     st.sidebar.title("Findata")
-    page = st.sidebar.radio("Navigate", ["Dashboard", "Analytics"], index=0)
+    page = st.sidebar.radio("Navigate", ["Dashboard", "Analytics", "Assistant"], index=0)
     if page == "Dashboard":
         render_dashboard()
-    else:
+    elif page == "Analytics":
         render_analytics()
+    else:
+        render_assistant()
 
 
 if __name__ == "__main__":

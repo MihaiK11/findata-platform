@@ -81,3 +81,34 @@ Load only missing symbols via Yahoo:
 ```powershell
 uv run python -m app.ingestion.fetch GOOGL TSLA NVDA --yahoo-only
 ```
+
+## Phase 7 — MCP + LLM assistant
+
+### Assistant API (for MCP & chat)
+
+| Endpoint | Tool |
+|----------|------|
+| `GET /assets` | `get_asset_list` |
+| `GET /prices/latest/{symbol}` | `get_latest_price` |
+| `GET /prices/history?symbol&start_date&end_date` | `get_asset_price_history` |
+| `POST /compare` | `compare_assets` |
+| `GET /analytics/stats?symbol&window` | `get_asset_stats` |
+
+### Run MCP server (Claude / Cursor)
+
+API must be running first. Then:
+
+```powershell
+uv run findata-mcp
+```
+
+Or use the bundled Cursor config (`.cursor/mcp.json`) after `uv sync`.
+
+### Streamlit chat
+
+1. Start API + Streamlit (see above).
+2. Open **Assistant** in the sidebar.
+3. Optional: set `ANTHROPIC_API_KEY` in `.env` for Claude tool-calling.
+4. Ask: *Show me AAPL trend last 30 days*
+
+Without an API key, a rule-based router still calls the same tools (grounded, no hallucination).
