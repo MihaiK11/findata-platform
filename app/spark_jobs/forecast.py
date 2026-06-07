@@ -4,8 +4,13 @@ from pyspark.sql.functions import monotonically_increasing_id
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.regression import LinearRegression
 
-MONGO_URL = "YOUR_MONGODB_URL"
-DB_NAME = "YOUR_DB_NAME"
+import os
+
+MONGO_URL = os.getenv("MONGODB_URL")
+DB_NAME = os.getenv("DB_NAME", "financial_dw")
+
+if not MONGO_URL:
+    raise ValueError("MONGODB_URL environment variable not set")
 
 client = MongoClient(MONGO_URL)
 
