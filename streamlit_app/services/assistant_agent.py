@@ -12,18 +12,12 @@ from streamlit_app.services.assistant_tools import (
     execute_tool,
 )
 
-# ─────────────────────────────────────────────
-# GREETINGS
-# ─────────────────────────────────────────────
 GREETINGS = {
     "hi", "hello", "hey",
     "good morning", "good afternoon", "good evening",
 }
 
-# ─────────────────────────────────────────────
-# STOP WORDS
-# ─────────────────────────────────────────────
-_STOP_WORDS: frozenset[str] = frozenset({
+_STOP_WORDS = frozenset({
     "A","I","AM","AN","AS","AT","BE","BY","DO","GO","HI","IF","IN","IS","IT",
     "ME","MY","NO","OF","ON","OR","SO","TO","UP","US","WE",
     "ALL","AND","ARE","CAN","DAY","DID","FOR","GET","GOT","HAD","HAS","HIM",
@@ -35,39 +29,29 @@ _STOP_WORDS: frozenset[str] = frozenset({
 })
 
 
-# ─────────────────────────────────────────────
-# SYMBOL EXTRACTION
-# ─────────────────────────────────────────────
 def _extract_symbol(text: str) -> str | None:
-    for match in re.finditer(r"\b([A-Z]{1,5})\b", text.upper()):
-        candidate = match.group(1)
-        if candidate not in _STOP_WORDS:
-            return candidate
+    for m in re.finditer(r"\b([A-Z]{1,5})\b", text.upper()):
+        s = m.group(1)
+        if s not in _STOP_WORDS:
+            return s
     return None
 
 
-def _get_valid_symbols(client: AssistantToolClient) -> set[str]:
-    """Fetch valid tickers from backend."""
+def _safe_json_loads(s: str) -> dict[str, Any]:
     try:
-        data = client.execute("get_asset_list", {})
-        return {a["symbol"].upper() for a in data.get("assets", [])}
+        return json.loads(s or "{}")
     except Exception:
-        return set()
+        return {}
 
 
-# ─────────────────────────────────────────────
-# RULE-BASED ROUTER
-# ─────────────────────────────────────────────
-def _rule_based_tool_call(question: str) -> tuple[str, dict[str, Any]] | None:
+def _rule_based_tool_call(question: str):
     q = question.lower()
     start, end = default_range(30)
 
     symbol = _extract_symbol(question)
 
     if "compare" in q:
-        symbols = re.findall(r"\b[A-Z]{1,5}\b", question.upper())
-        symbols = [s for s in symbols if s not in _STOP_WORDS]
-
+        symbols = [s for s in re.findall(r"\b[A-Z]{1,5}\b", question.upper()) if s not in _STOP_WORDS]
         if len(symbols) >= 2:
             return "compare_assets", {
                 "symbols": symbols[:5],
@@ -80,10 +64,10 @@ def _rule_based_tool_call(question: str) -> tuple[str, dict[str, Any]] | None:
             return "get_asset_list", {}
         return None
 
-    if any(x in q for x in ["latest", "price now", "current"]):
+    if any(x in q for x in ["latest", "current", "price now"]):
         return "get_latest_price", {"symbol": symbol}
 
-    if any(x in q for x in ["trend", "history", "chart"]):
+    if any(x in q for x in ["history", "trend", "chart"]):
         return "get_asset_price_history", {
             "symbol": symbol,
             "start_date": start,
@@ -96,9 +80,6 @@ def _rule_based_tool_call(question: str) -> tuple[str, dict[str, Any]] | None:
     return "get_asset_stats", {"symbol": symbol, "window": "30d"}
 
 
-# ─────────────────────────────────────────────
-# OPENAI AGENT
-# ─────────────────────────────────────────────
 def run_openai_agent(
     client: AssistantToolClient,
     api_key: str,
@@ -106,8 +87,7 @@ def run_openai_agent(
     *,
     model: str = "gpt-4o",
     max_turns: int = 5,
-) -> tuple[str, list[dict[str, Any]]]:
-
+):
     from openai import OpenAI
 
     openai_client = OpenAI(api_key=api_key)
@@ -115,33 +95,39 @@ def run_openai_agent(
     messages: list[dict[str, Any]] = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT +
-            "\n\nStyle rules:\n"
-            "- Respond like a helpful financial assistant\n"
-            "- Keep answers simple and natural\n"
-            "- No JSON, no raw tool output\n"
+            "content": SYSTEM_PROMPT + "\n\nRespond like a helpful financial assistant.",
         },
         {"role": "user", "content": question},
     ]
 
-    trace: list[dict[str, Any]] = []
+    trace = []
 
     for _ in range(max_turns):
-        response = openai_client.chat.completions.create(
+        resp = openai_client.chat.completions.create(
             model=model,
             tools=OPENAI_TOOL_DEFINITIONS,
             tool_choice="auto",
             messages=messages,
         )
 
-        msg = response.choices[0].message
-        messages.append(msg.model_dump(exclude_unset=True))
+        msg = resp.choices[0].message
+
+        # ✅ normalize assistant message safely
+        assistant_msg = {
+            "role": "assistant",
+            "content": msg.content,
+        }
+
+        if msg.tool_calls:
+            assistant_msg["tool_calls"] = msg.tool_calls
+
+        messages.append(assistant_msg)
 
         if not msg.tool_calls:
             return (msg.content or "").strip(), trace
 
         for tc in msg.tool_calls:
-            args = json.loads(tc.function.arguments or "{}")
+            args = _safe_json_loads(tc.function.arguments)
 
             raw = execute_tool(client, tc.function.name, args)
 
@@ -160,25 +146,14 @@ def run_openai_agent(
     return "I couldn't complete your request.", trace
 
 
-# ─────────────────────────────────────────────
-# MAIN ENTRY
-# ─────────────────────────────────────────────
-def answer_question(
-    client: AssistantToolClient,
-    question: str,
-    *,
-    api_key: str | None = None,
-) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
+def answer_question(client, question: str, *, api_key: str | None = None):
 
-    chart_payload: dict[str, Any] | None = None
+    chart_payload = None
     clean = question.lower().strip()
 
-    # ───────────────
-    # GREETINGS
-    # ───────────────
     if any(g in clean for g in GREETINGS):
         return (
-            "Hi 👋 I can help you explore stocks, prices, trends, and comparisons. What would you like to check?",
+            "Hi 👋 I can help with stocks, prices, and analysis. What do you want to check?",
             [],
             None,
         )
@@ -189,104 +164,54 @@ def answer_question(
     if clean in {"bye", "goodbye"}:
         return ("Goodbye 👋", [], None)
 
-    # ───────────────
-    # OPENAI MODE
-    # ───────────────
+    # ───────── OPENAI MODE ─────────
     if api_key:
         try:
             answer, trace = run_openai_agent(client, api_key, question)
         except Exception as e:
-            return (f"Error processing request: {str(e)}", [], None)
+            return (f"Error: {e}", [], None)
 
-    # ───────────────
-    # FALLBACK MODE
-    # ───────────────
+    # ───────── FALLBACK MODE ─────────
     else:
         routed = _rule_based_tool_call(question)
 
         if not routed:
-            try:
-                assets = client.execute("get_asset_list", {}).get("assets", [])[:5]
-                symbols = ", ".join([a["symbol"] for a in assets]) or "AAPL, MSFT"
-            except Exception:
-                symbols = "AAPL, MSFT, TSLA"
+            return ("Try asking about AAPL, MSFT, TSLA 🙂", [], None)
 
-            return (
-                f"I couldn't find that. Try one of these: {symbols} 🙂",
-                [],
-                None,
-            )
+        tool, args = routed
+        raw = execute_tool(client, tool, args)
 
-        tool_name, args = routed
-        raw = execute_tool(client, tool_name, args)
+        trace = [{"tool": tool, "input": args, "output": raw}]
+        payload = _safe_json_loads(raw)
 
-        trace = [{
-            "tool": tool_name,
-            "input": args,
-            "output": raw,
-        }]
+        if tool == "get_latest_price":
+            answer = f"{payload.get('symbol')} ≈ {payload.get('close')}"
 
-        payload = json.loads(raw)
-
-        # ───────────────
-        # HUMAN RESPONSES
-        # ───────────────
-        if tool_name == "get_latest_price":
-            answer = (
-                f"{payload['symbol']} is trading around {payload['close']} "
-                f"(latest data from {payload['date']})."
-            )
-
-        elif tool_name == "get_asset_stats":
-            answer = (
-                f"{payload['symbol']} shows a {payload.get('trend', 'stable')} trend over the last {payload['window']}. "
-                f"Latest price is {payload.get('latest_price')}."
-            )
-
-        elif tool_name == "get_asset_price_history":
+        elif tool == "get_asset_price_history":
             s = payload.get("summary", {})
-            answer = (
-                f"{payload['symbol']} moved from {s.get('start_close')} to {s.get('end_close')} "
-                f"over the selected period ({payload['start_date']} → {payload['end_date']})."
-            )
+            answer = f"{payload.get('symbol')} moved {s.get('start_close')} → {s.get('end_close')}"
 
-        elif tool_name == "compare_assets":
+        elif tool == "compare_assets":
             comps = payload.get("comparisons", [])
-            if comps:
-                best = max(comps, key=lambda x: x.get("pct_change", 0))
-                answer = (
-                    "Comparison results:\n" +
-                    "\n".join([f"• {c['symbol']}: {c['pct_change']}%" for c in comps]) +
-                    f"\n\nBest performer: {best['symbol']}"
-                )
-            else:
-                answer = "No comparison data available."
+            answer = " | ".join([f"{c['symbol']} {c['pct_change']}%" for c in comps])
 
-        elif tool_name == "get_asset_list":
-            assets = payload.get("assets", [])
-            answer = "Tracked assets: " + ", ".join([a["symbol"] for a in assets[:10]])
+        elif tool == "get_asset_list":
+            answer = ", ".join([a["symbol"] for a in payload.get("assets", [])])
 
         else:
-            answer = "Data retrieved, but I couldn't format it clearly."
+            answer = "Data retrieved."
 
-    # ───────────────
-    # CHART
-    # ───────────────
-    for item in trace:
-        if item["tool"] != "get_asset_price_history":
+    # ───────── CHART EXTRACTION ─────────
+    for t in trace:
+        if t["tool"] != "get_asset_price_history":
             continue
 
-        try:
-            payload = json.loads(item["output"])
-        except Exception:
-            continue
+        p = _safe_json_loads(t["output"])
+        rows = p.get("data", [])
 
-        rows = payload.get("data") or []
         if rows:
             chart_payload = {
-                "symbol": payload.get("symbol"),
-                "start_date": payload.get("start_date"),
-                "end_date": payload.get("end_date"),
+                "symbol": p.get("symbol"),
                 "rows": rows,
             }
             break
