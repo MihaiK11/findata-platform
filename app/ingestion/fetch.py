@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import logging
 from datetime import datetime, timezone
+from app.db.db_collections import insert_asset_version
 
 import nasdaqdatalink
 import pandas as pd
@@ -123,7 +124,7 @@ async def save_asset(symbol: str, data: pd.DataFrame, data_source: str) -> int:
         "data_source_id": data_source,
     }
 
-    await db.assets.update_one({"symbol": symbol}, {"$set": asset_doc}, upsert=True)
+    await insert_asset_version(asset_doc)
     print(f"  Asset {symbol} saved (source={data_source})")
 
     inserted = 0
