@@ -51,12 +51,15 @@ def _rule_based_tool_call(question: str):
     symbol = _extract_symbol(question)
 
     if "compare" in q:
-        symbols = [s for s in re.findall(r"\b[A-Z]{1,5}\b", question.upper()) if s not in _STOP_WORDS]
+        symbols = [
+            s
+            for s in re.findall(r"\b[A-Z]{1,5}\b", question.upper())
+            if s not in _STOP_WORDS
+        ]
+
         if len(symbols) >= 2:
             return "compare_assets", {
-                "symbols": symbols[:5],
-                "start_date": start,
-                "end_date": end,
+                "symbols": symbols[:5]
             }
 
     if not symbol:
@@ -191,9 +194,30 @@ def answer_question(client, question: str, *, api_key: str | None = None):
             s = payload.get("summary", {})
             answer = f"{payload.get('symbol')} moved {s.get('start_close')} → {s.get('end_close')}"
 
+
         elif tool == "compare_assets":
-            comps = payload.get("comparisons", [])
-            answer = " | ".join([f"{c['symbol']} {c['pct_change']}%" for c in comps])
+
+            if payload.get("error"):
+
+                answer = f"Comparison failed: {payload['error']}"
+
+            else:
+
+                comps = payload.get("comparisons", [])
+
+                if not comps:
+
+                    answer = "No comparison data available."
+
+                else:
+
+                    answer = " | ".join(
+
+                        f"{c.get('symbol')} {c.get('pct_change', 0):.2f}%"
+
+                        for c in comps
+
+                    )
 
         elif tool == "get_asset_list":
             answer = ", ".join([a["symbol"] for a in payload.get("assets", [])])

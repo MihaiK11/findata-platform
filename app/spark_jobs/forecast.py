@@ -1,91 +1,148 @@
-from pymongo import MongoClient
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import monotonically_increasing_id
-from pyspark.ml.feature import VectorAssembler
-from pyspark.ml.regression import LinearRegression
+from __future__ import annotations
 
-import os
 import logging
+import os
+from pymongo import MongoClient
+
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType
+from pyspark.sql.functions import col, avg
+
+from app.config import settings
+
+# ----------------------------
+# FIX Spark Python on Windows
+# ----------------------------
+os.environ["PYSPARK_PYTHON"] = "python"
+os.environ["PYSPARK_DRIVER_PYTHON"] = "python"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ----------------------------
+# Spark Session
+# ----------------------------
+spark = (
+    SparkSession.builder
+    .appName("FinancialForecast")
+    .master("local[*]")
+    .config("spark.pyspark.python", "python")
+    .config("spark.pyspark.driver.python", "python")
+    .getOrCreate()
+)
 
-def run_forecast() -> None:
-    mongo_url = os.getenv("MONGODB_URL")
-    db_name = os.getenv("DB_NAME", "financial_dw")
+
+# =========================================================
+# REUSED MONGO LOADER (based on aggregation.py)
+# =========================================================
+def load_time_series_from_mongo():
+    mongo_url = settings.mongodb_url
+    db_name = settings.db_name
 
     if not mongo_url:
         raise ValueError("MONGODB_URL environment variable not set")
 
     client = MongoClient(mongo_url)
-    spark = None
 
     try:
         logger.info("Loading time-series data from MongoDB...")
 
+        collection = client[db_name].time_series
+
         rows = list(
-            client[db_name].time_series.find(
-                {"is_deleted": False}
+            collection.find(
+                {"is_deleted": False},
+                {"_id": 0}
             )
         )
 
         if not rows:
             logger.warning("No time-series data found.")
-            return
+            return []
 
-        spark = (
-            SparkSession.builder
-            .appName("ForecastModel")
-            .getOrCreate()
+        logger.info("Normalizing numeric fields...")
+
+        for row in rows:
+            for key in ["open", "high", "low", "close", "volume"]:
+                if row.get(key) is not None:
+                    try:
+                        row[key] = float(row[key])
+                    except (TypeError, ValueError):
+                        row[key] = None
+
+        return rows
+
+    finally:
+        client.close()
+
+
+# =========================================================
+# FORECAST LOGIC
+# =========================================================
+def build_forecast(df):
+    """
+    Simple forecasting baseline:
+    - mean close price per symbol
+    - can be replaced with ML model later
+    """
+
+    logger.info("Building forecast...")
+
+    forecast_df = (
+        df.groupBy("symbol")
+        .agg(
+            avg(col("close")).alias("predicted_price")
         )
+    )
 
-        df = spark.createDataFrame(rows)
+    return forecast_df
 
-        logger.info("Creating features...")
 
-        df = df.withColumn(
-            "day_index",
-            monotonically_increasing_id()
-        )
+# =========================================================
+# MAIN PIPELINE
+# =========================================================
+def run_forecast():
+    try:
+        # 1. Load data (NOW SAME AS aggregation.py STYLE)
+        rows = load_time_series_from_mongo()
 
-        assembler = VectorAssembler(
-            inputCols=["day_index"],
-            outputCol="features"
-        )
+        if not rows:
+            logger.warning("No data to forecast.")
+            return []
 
-        training = assembler.transform(df)
+        # 2. Explicit schema (prevents DoubleType/LongType crash)
+        schema = StructType([
+            StructField("symbol", StringType(), True),
+            StructField("open", DoubleType(), True),
+            StructField("high", DoubleType(), True),
+            StructField("low", DoubleType(), True),
+            StructField("close", DoubleType(), True),
+            StructField("volume", DoubleType(), True),
+        ])
 
-        lr = LinearRegression(
-            featuresCol="features",
-            labelCol="close"
-        )
+        logger.info("Creating Spark DataFrame...")
+        df = spark.createDataFrame(rows, schema=schema)
 
-        model = lr.fit(training)
+        df.show()
 
-        predictions = model.transform(training)
+        # 3. Forecast
+        forecast = build_forecast(df)
 
-        results = []
-        for row in predictions.select("symbol", "prediction").collect():
-            try:
-                results.append(row.asDict())
-            except Exception as e:
-                logger.warning("Skipping row due to error: %s", e)
+        logger.info("Forecast results:")
+        forecast.show()
 
-        if results:
-            client[db_name].forecast_results.delete_many({})
-            client[db_name].forecast_results.insert_many(results)
+        # 4. Collect results
+        results = [r.asDict() for r in forecast.collect()]
 
-        logger.info("Forecast complete. %s predictions written.", len(results))
+        logger.info("Forecast completed successfully.")
+        return results
 
     except Exception as e:
-        logger.exception("Forecast job failed: %s", e)
+        logger.exception(f"Forecast job failed: {e}")
         raise
 
     finally:
-        if spark is not None:
-            spark.stop()
-        client.close()
+        spark.stop()
 
 
 if __name__ == "__main__":

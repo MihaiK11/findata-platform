@@ -9,8 +9,7 @@ class Asset(BaseModel):
     region: str            # US, Europe, China, Africa etc.
     currency: Optional[str] = None
     exchange: Optional[str] = None
-    extra_attributes: dict = {}  # handles heterogeneous data per instrument type
+    extra_attributes: dict = {}
 
-    # temporal fields — every document must have these
     valid_from: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_deleted: bool = False

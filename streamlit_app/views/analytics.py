@@ -89,5 +89,5 @@ def render() -> None:
     st.success(f"Predicted next-day close: {format_currency(forecast)}")
     st.write(
         "Forecast method: **linear regression** over the historical close series "
-        "(numpy `polyfit`, degree 1). Trend is derived from the latest **MA5 / MA20 / MA50** crossover."
+        ". Trend is derived from the latest **MA5 / MA20 / MA50** crossover."
     )

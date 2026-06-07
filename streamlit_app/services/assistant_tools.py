@@ -66,10 +66,14 @@ def _iso_date(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
-def default_range(days: int = 30) -> tuple[str, str]:
+def default_range(days: int = 365):
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
-    return _iso_date(start), _iso_date(end)
+
+    return (
+        start.date().isoformat(),
+        end.date().isoformat(),
+    )
 
 
 # ─────────────────────────────────────────────
