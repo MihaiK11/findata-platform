@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "financial-assistant": {
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "mcp_server.server"
+      ],
+      "env": {
+        "FINDATA_API_URL": "http://127.0.0.1:8000"
+      }
+    }
+  }
+}
